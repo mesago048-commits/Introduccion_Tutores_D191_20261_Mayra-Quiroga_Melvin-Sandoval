@@ -36,14 +36,8 @@ def generar_horas(inicio, fin):
 
     horas = []
 
-    if not inicio or not fin:
-        return horas
-
-    try:
-        inicio = datetime.datetime.strptime(inicio, "%H:%M:%S")
-        fin = datetime.datetime.strptime(fin, "%H:%M:%S")
-    except:
-        return horas
+    inicio = datetime.datetime.strptime(inicio, "%H:%M:%S")
+    fin = datetime.datetime.strptime(fin, "%H:%M:%S")
 
     while inicio < fin:
 
@@ -63,7 +57,7 @@ def obtener_docentes():
         .eq("rol", "Docente") \
         .execute()
 
-    return respuesta.data if respuesta.data else []
+    return respuesta.data
 
 
 # ---------------------------
@@ -244,107 +238,89 @@ elif menu == "Reservar" and st.session_state["rol"] == "Estudiante":
 
     if not docentes:
         st.warning("No hay docentes registrados")
+        st.stop()
 
+    nombres_docentes = [d["nombre"] for d in docentes]
+
+    docente_nombre = st.selectbox("Docente", nombres_docentes)
+
+    docente = next((d for d in docentes if d["nombre"] == docente_nombre), None)
+
+    materias_docente = docente["materias"].split(",") if docente.get("materias") else []
+
+    materia = st.selectbox("Materia", materias_docente)
+
+    dias_docente = docente.get("dias_tutorias", "")
+
+    if dias_docente:
+        dias_docente = dias_docente.split(",")
     else:
+        dias_docente = []
 
-        nombres_docentes = [d["nombre"] for d in docentes]
+    eventos = []
 
-        docente_nombre = st.selectbox("Docente", nombres_docentes)
+    hoy = datetime.date.today()
 
-        docente = next((d for d in docentes if d["nombre"] == docente_nombre), None)
+    for i in range(30):
 
-        materias_docente = docente.get("materias")
+        fecha_temp = hoy + datetime.timedelta(days=i)
 
-        if materias_docente:
-            materias_docente = materias_docente.split(",")
-        else:
-            materias_docente = ["General"]
+        dia_es = dias_semana[fecha_temp.strftime("%A")]
 
-        materia = st.selectbox("Materia", materias_docente)
+        if dia_es in dias_docente:
 
-        dias_docente = docente.get("dias_tutorias")
+            eventos.append({
+                "title": "Tutorías disponibles",
+                "start": str(fecha_temp),
+                "color": "#2ECC71"
+            })
 
-        if dias_docente:
-            dias_docente = dias_docente.split(",")
-        else:
-            dias_docente = []
+    calendar(events=eventos, options={"initialView": "dayGridMonth"})
 
-        # ---------------------------
-        # CALENDARIO PRIMERO
-        # ---------------------------
-        eventos = []
+    fecha = st.date_input("Selecciona fecha", min_value=hoy)
 
-        hoy = datetime.date.today()
+    dia_seleccionado = dias_semana[fecha.strftime("%A")]
 
-        for i in range(30):
+    if dia_seleccionado not in dias_docente:
 
-            fecha_temp = hoy + datetime.timedelta(days=i)
+        st.warning("Ese docente no da tutorías ese día")
+        st.stop()
 
-            dia_es = dias_semana[fecha_temp.strftime("%A")]
+    horas_docente = generar_horas(docente["hora_inicio"], docente["hora_fin"])
 
-            if dia_es in dias_docente:
+    reservas = supabase.table("reservas") \
+        .select("*") \
+        .eq("docente", docente_nombre) \
+        .eq("fecha", str(fecha)) \
+        .execute().data
 
-                eventos.append({
-                    "title": "Tutorías disponibles",
-                    "start": str(fecha_temp),
-                    "color": "#2ECC71"
-                })
+    horas_ocupadas = [r["hora"][:5] for r in reservas] if reservas else []
 
-        st.subheader("Calendario de disponibilidad")
+    horas_disponibles = [h for h in horas_docente if h not in horas_ocupadas]
 
-        calendar(events=eventos, options={"initialView": "dayGridMonth", "height":600})
+    if not horas_disponibles:
+        st.warning("No hay horarios disponibles ese día")
+        st.stop()
 
-        # ---------------------------
-        # SELECCIÓN DE FECHA
-        # ---------------------------
-        fecha = st.date_input("Selecciona fecha", min_value=hoy)
+    hora = st.selectbox("Hora disponible", horas_disponibles)
 
-        dia_seleccionado = dias_semana[fecha.strftime("%A")]
+    if st.button("Reservar"):
 
-        if dia_seleccionado not in dias_docente:
+        data = {
+            "estudiante": estudiante,
+            "docente": docente_nombre,
+            "materia": materia,
+            "fecha": str(fecha),
+            "hora": hora
+        }
 
-            st.warning("Ese docente no da tutorías ese día")
+        supabase.table("reservas").insert(data).execute()
 
-        else:
-
-            horas_docente = generar_horas(docente["hora_inicio"], docente["hora_fin"])
-
-            reservas = supabase.table("reservas") \
-                .select("*") \
-                .eq("docente", docente_nombre) \
-                .eq("fecha", str(fecha)) \
-                .execute().data
-
-            horas_ocupadas = [r["hora"][:5] for r in reservas] if reservas else []
-
-            horas_disponibles = [h for h in horas_docente if h not in horas_ocupadas]
-
-            if not horas_disponibles:
-
-                st.warning("No hay horarios disponibles ese día")
-
-            else:
-
-                hora = st.selectbox("Hora disponible", horas_disponibles)
-
-                if st.button("Reservar"):
-
-                    data = {
-                        "estudiante": estudiante,
-                        "docente": docente_nombre,
-                        "materia": materia,
-                        "fecha": str(fecha),
-                        "hora": hora
-                    }
-
-                    supabase.table("reservas").insert(data).execute()
-
-                    st.success("Tutoría reservada")
-                    st.rerun()
+        st.success("Tutoría reservada")
 
 
 # ---------------------------
-# VER RESERVAS
+# VER RESERVAS (MEJORADO)
 # ---------------------------
 elif menu in ["Ver Reservas", "Ver Mis Tutorías", "Gestionar Reservas"]:
 
@@ -357,9 +333,11 @@ elif menu in ["Ver Reservas", "Ver Mis Tutorías", "Gestionar Reservas"]:
     df = pd.DataFrame(reservas)
 
     if st.session_state["rol"] == "Estudiante":
+
         df = df[df["estudiante"] == st.session_state["usuario"]]
 
     elif st.session_state["rol"] == "Docente":
+
         df = df[df["docente"] == st.session_state["usuario"]]
 
     eventos = []
@@ -382,7 +360,13 @@ elif menu in ["Ver Reservas", "Ver Mis Tutorías", "Gestionar Reservas"]:
 
     st.subheader("📅 Calendario de Tutorías")
 
-    calendar(events=eventos, options={"initialView":"dayGridMonth","height":650})
+    calendar(
+        events=eventos,
+        options={
+            "initialView": "dayGridMonth",
+            "height": 650
+        }
+    )
 
     st.subheader("Lista de Tutorías")
 
