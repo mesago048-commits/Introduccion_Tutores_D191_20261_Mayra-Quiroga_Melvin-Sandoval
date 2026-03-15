@@ -78,12 +78,12 @@ elif menu == "Crear Cuenta":
         p_reg = st.text_input("Contraseña", type="password", key="reg_pass")
         n_reg = st.text_input("Nombre completo")
     with c2:
-        # CORREGIDO: Se añade Administrador al registro
         r_reg = st.selectbox("Rol:", ["Estudiante", "Docente", "Administrador"])
         m, ds, hi, ho = "", [], "08:00:00", "12:00:00"
         if r_reg == "Docente":
             m = st.text_input("Materias (separadas por coma)")
-            ds = st.multiselect("Días de atención", list(dias_semana.values()))
+            # CORRECCIÓN: Límite de 3 días máximo
+            ds = st.multiselect("Días de atención (Máximo 3)", list(dias_semana.values()), max_selections=3)
             hi = str(st.time_input("Hora Inicio"))
             ho = str(st.time_input("Hora Fin"))
 
@@ -154,18 +154,27 @@ elif menu == "Reservar Tutoría":
         st.divider()
         mats = d_sel["materias"].split(",") if d_sel["materias"] else ["General"]
         mat_sel, f_sel = st.selectbox("Materia", mats), st.date_input("Fecha", min_value=hoy)
+        
         if dias_semana[f_sel.strftime("%A")] in d_dis:
             hrs = generar_horas(d_sel["hora_inicio"], d_sel["hora_fin"])
+            # CORRECCIÓN: Filtramos horas para que no se puedan repetir reservas en el mismo bloque
             ocup_res = supabase.table("reservas").select("hora").eq("docente", doc_nom).eq("fecha", str(f_sel)).execute().data
             ocup = [r["hora"][:5] for r in ocup_res] if ocup_res else []
             libres = [h for h in hrs if h not in ocup]
+            
             if libres:
                 h_sel = st.selectbox("Hora", libres)
                 if st.button("Confirmar Cupo"):
-                    supabase.table("reservas").insert({"estudiante": st.session_state["usuario"], "docente": doc_nom, "materia": mat_sel, "fecha": str(f_sel), "hora": h_sel}).execute()
+                    supabase.table("reservas").insert({
+                        "estudiante": st.session_state["usuario"], 
+                        "docente": doc_nom, 
+                        "materia": mat_sel, 
+                        "fecha": str(f_sel), 
+                        "hora": h_sel
+                    }).execute()
                     st.success("🎉 ¡Tutoría reservada!"); st.balloons()
-            else: st.warning("Sin cupos.")
-        else: st.error("Día no disponible.")
+            else: st.warning("Sin cupos disponibles para este día.")
+        else: st.error("El profesor no atiende este día.")
 
 elif menu == "Mis Reservas":
     st.title("📑 Mis Tutorías Programadas")
